@@ -116,6 +116,38 @@ EMBEDDING_PREFIX_QUERY="検索クエリ: "
 EMBEDDING_PREFIX_EMBEDDING="検索文書: "
 ```
 
+#### OpenAI: text-embedding-3-large
+
+```env
+EMBEDDING_MODEL=openai/text-embedding-3-large
+EMBEDDING_DIM=3072
+EMBEDDING_PREFIX_QUERY=""
+EMBEDDING_PREFIX_EMBEDDING=""
+```
+
+#### Google: text-embedding-004
+
+```env
+EMBEDDING_MODEL=google/text-embedding-004
+EMBEDDING_DIM=768
+EMBEDDING_PREFIX_QUERY=""
+EMBEDDING_PREFIX_EMBEDDING=""
+```
+
+#### Anthropic: Claude
+
+現在、ClaudeはスタンドアロンのEmbedding APIを提供していません。
+
+### APIキーの設定
+
+OpenAI, Google, Anthropic のモデルを使用する場合は、`.env`ファイルにそれぞれのAPIキーを設定する必要があります。
+
+```env
+OPENAI_API_KEY="your-openai-api-key"
+GOOGLE_API_KEY="your-google-api-key"
+ANTHROPIC_API_KEY="your-anthropic-api-key"
+```
+
 ### プレフィックスについて
 
 多くのエンベディングモデル（特にE5系）では、テキストの種類に応じてプレフィックスを付けることで性能が向上します：
