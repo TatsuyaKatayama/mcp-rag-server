@@ -2,16 +2,20 @@
 エンベディング生成モジュール
 
 テキストからエンベディングを生成します。
+HuggingFace, OpenAI, Google, Anthropicのモデルをサポートします。
 """
 
 import logging
 import os
-from typing import List
-from sentence_transformers import SentenceTransformer
+from typing import List, Literal
+
 from dotenv import load_dotenv
 
 # .envの読み込み
 load_dotenv()
+
+# Provider type
+Provider = Literal["huggingface", "openai", "google", "anthropic"]
 
 
 class EmbeddingGenerator:
@@ -19,10 +23,12 @@ class EmbeddingGenerator:
     エンベディング生成クラス
 
     テキストからエンベディングを生成します。
+    HuggingFace, OpenAI, Google, Anthropicのモデルをサポートします。
 
     Attributes:
-        model: SentenceTransformerモデル
+        model: 各プロバイダーのモデル/クライアント
         logger: ロガー
+        provider: プロバイダー名
     """
 
     def __init__(self, model_name: str = None):
@@ -36,15 +42,43 @@ class EmbeddingGenerator:
         self.model_name = os.getenv("EMBEDDING_MODEL", "intfloat/multilingual-e5-large")
         self.prefix_query = os.getenv("EMBEDDING_PREFIX_QUERY", "")
         self.prefix_embedding = os.getenv("EMBEDDING_PREFIX_EMBEDDING", "")
+        self.provider: Provider = "huggingface"
+        self.model = None
 
         # ロガーの設定
         self.logger = logging.getLogger("embedding_generator")
         self.logger.setLevel(logging.INFO)
 
+        # プロバイダーを特定
+        if self.model_name.startswith("openai/"):
+            self.provider = "openai"
+            self.model_name = self.model_name.replace("openai/", "")
+        elif self.model_name.startswith("google/"):
+            self.provider = "google"
+            self.model_name = self.model_name.replace("google/", "")
+        elif self.model_name.startswith("anthropic/"):
+            self.provider = "anthropic"
+            self.model_name = self.model_name.replace("anthropic/", "")
+
         # モデルの読み込み
-        self.logger.info(f"モデル '{self.model_name}' を読み込んでいます...")
+        self.logger.info(f"プロバイダー '{self.provider}' のモデル '{self.model_name}' を読み込んでいます...")
         try:
-            self.model = SentenceTransformer(self.model_name)
+            if self.provider == "huggingface":
+                from sentence_transformers import SentenceTransformer
+
+                self.model = SentenceTransformer(self.model_name)
+            elif self.provider == "openai":
+                from openai import OpenAI
+
+                self.model = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+            elif self.provider == "google":
+                import google.generativeai as genai
+
+                genai.configure(api_key=os.getenv("GOOGLE_API_KEY"))
+                self.model = "models/" + self.model_name
+            elif self.provider == "anthropic":
+                self.logger.warning("Anthropicは現在Embedding APIをサポートしていません。")
+
             self.logger.info(f"モデル '{self.model_name}' を読み込みました")
         except Exception as e:
             self.logger.error(f"モデル '{self.model_name}' の読み込みに失敗しました: {str(e)}")
@@ -61,7 +95,7 @@ class EmbeddingGenerator:
         Returns:
             プレフィックス付きのテキスト
         """
-        if not prefix:
+        if not prefix or self.provider != "huggingface":
             return text
 
         # プレフィックスが既に含まれているかチェック（大文字小文字を区別）
@@ -80,19 +114,7 @@ class EmbeddingGenerator:
         Returns:
             エンベディング（浮動小数点数のリスト）
         """
-        if not text:
-            self.logger.warning("空のテキストからエンベディングを生成しようとしています")
-            return []
-
-        try:
-            processed_text = self._add_prefix(text, self.prefix_embedding)
-            embedding = self.model.encode(processed_text)
-            embedding_list = embedding.tolist()
-            self.logger.debug(f"テキスト '{text[:50]}...' のエンベディングを生成しました")
-            return embedding_list
-        except Exception as e:
-            self.logger.error(f"エンベディングの生成中にエラーが発生しました: {str(e)}")
-            raise
+        return self.generate_embeddings([text])[0]
 
     def generate_embeddings(self, texts: List[str]) -> List[List[float]]:
         """
@@ -109,9 +131,27 @@ class EmbeddingGenerator:
             return []
 
         try:
-            processed_texts = [self._add_prefix(text, self.prefix_embedding) for text in texts]
-            embeddings = self.model.encode(processed_texts)
-            embeddings_list = embeddings.tolist()
+            if self.provider == "huggingface":
+                processed_texts = [self._add_prefix(text, self.prefix_embedding) for text in texts]
+                embeddings = self.model.encode(processed_texts)
+                embeddings_list = embeddings.tolist()
+            elif self.provider == "openai":
+                response = self.model.embeddings.create(input=texts, model=self.model_name)
+                embeddings_list = [item.embedding for item in response.data]
+            elif self.provider == "google":
+                import google.generativeai as genai
+
+                result = genai.embed_content(
+                    model=self.model,
+                    content=texts,
+                    task_type="retrieval_document",
+                )
+                embeddings_list = result["embedding"]
+            elif self.provider == "anthropic":
+                self.logger.warning("AnthropicはEmbedding APIをサポートしていないため、空のリストを返します。")
+                embedding_dim = int(os.getenv("EMBEDDING_DIM", "1024"))
+                embeddings_list = [[0.0] * embedding_dim for _ in texts]
+
             self.logger.info(f"{len(texts)} 個のテキストのエンベディングを生成しました")
             return embeddings_list
         except Exception as e:
@@ -133,9 +173,27 @@ class EmbeddingGenerator:
             return []
 
         try:
-            processed_query = self._add_prefix(query, self.prefix_query)
-            embedding = self.model.encode(processed_query)
-            embedding_list = embedding.tolist()
+            if self.provider == "huggingface":
+                processed_query = self._add_prefix(query, self.prefix_query)
+                embedding = self.model.encode(processed_query)
+                embedding_list = embedding.tolist()
+            elif self.provider == "openai":
+                response = self.model.embeddings.create(input=[query], model=self.model_name)
+                embedding_list = response.data[0].embedding
+            elif self.provider == "google":
+                import google.generativeai as genai
+
+                result = genai.embed_content(
+                    model=self.model,
+                    content=query,
+                    task_type="retrieval_query",
+                )
+                embedding_list = result["embedding"]
+            elif self.provider == "anthropic":
+                self.logger.warning("AnthropicはEmbedding APIをサポートしていないため、空のリストを返します。")
+                embedding_dim = int(os.getenv("EMBEDDING_DIM", "1024"))
+                embedding_list = [0.0] * embedding_dim
+
             self.logger.debug(f"クエリ '{query}' のエンベディングを生成しました")
             return embedding_list
         except Exception as e:
